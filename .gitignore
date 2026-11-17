@@ -1,0 +1,9 @@
+node_modules/
+dist/
+
+# 研究データ・添付ファイル（ローカルのみ）
+app/data/
+
+# ローカル設定
+.claude/
+*.tmp
