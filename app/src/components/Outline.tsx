@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Branch, Commit, ID, Project } from '../types';
-import { lineage, ownCommits, sortedBranches } from '../store';
+import { fullLineage, ownCommits, sortedBranches } from '../store';
+import { bibFile, fullCite, hasRef, shortCite } from '../bib';
 import { branchColorMap } from '../graph';
 import { Markdown, STATUS_LABEL, StatusBadge, TagChip } from './ui';
 
@@ -12,7 +13,8 @@ interface Step {
 }
 
 function buildSteps(p: Project, branchId: ID): Step[] {
-  const path = lineage(p, p.branches[branchId]?.headId ?? null);
+  // 統合（merge）したブランチの記録も含めて、作成順に並べる
+  const path = fullLineage(p, p.branches[branchId]?.headId ?? null);
   const onPath = new Set(path.map((c) => c.id));
   return path.map((c) => ({
     commit: c,
@@ -37,6 +39,7 @@ function toMarkdown(p: Project, branchId: ID, steps: Step[], mode: Mode, withBod
   const renderStep = (s: Step, n: string, level: string) => {
     out.push(`${level} ${n} ${s.commit.title}`, '');
     if (s.commit.tagIds.length) out.push(`*${tagNames(s.commit)}*`, '');
+    if (s.commit.ref && hasRef(s.commit)) out.push(`文献: ${shortCite(s.commit.ref)}`, '');
     if (withBody && s.commit.body.trim()) out.push(demote(s.commit.body.trim()), '');
     if (withBody && s.commit.links.length) out.push(...s.commit.links.map((l) => `- ${l}`), '');
     if (withForks) {
@@ -59,6 +62,12 @@ function toMarkdown(p: Project, branchId: ID, steps: Step[], mode: Mode, withBod
       out.push(`## ${sec}. ${t ? p.tags[t].name : 'その他'}`, '');
       its.forEach((s, i) => renderStep(s, `${sec}.${i + 1}`, '###'));
     }
+  }
+  const refs = steps.map((s) => s.commit).filter(hasRef);
+  if (refs.length) {
+    out.push('## 参考文献', '');
+    for (const c of refs) out.push(`- ${fullCite(c.ref!)}`);
+    out.push('');
   }
   return out.join('\n');
 }
@@ -89,13 +98,27 @@ export function Outline({ project: p, onSelect }: { project: Project; onSelect: 
     a.click();
     URL.revokeObjectURL(a.href);
   };
+  const refCommits = steps.map((s) => s.commit).filter(hasRef);
+  const downloadBib = () => {
+    const blob = new Blob([bibFile(refCommits)], { type: 'application/x-bibtex' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${p.name}-references.bib`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
 
   const renderStep = (s: Step, label: string) => (
     <li key={s.commit.id} className="ostep">
       <div className="ostep-num">{label}</div>
       <div className="ostep-card">
         <button className="ostep-title link-btn" onClick={() => onSelect(s.commit.id)}>{s.commit.title}</button>
-        <div className="tag-pick">{s.commit.tagIds.map((t) => p.tags[t] && <TagChip key={t} tag={p.tags[t]} small />)}</div>
+        <div className="tag-pick">
+          {s.commit.tagIds.map((t) => p.tags[t] && <TagChip key={t} tag={p.tags[t]} small />)}
+          {s.commit.ref && hasRef(s.commit) && <span className="cite-chip">📚 {shortCite(s.commit.ref)}</span>}
+          {s.commit.mergeParentId && <span className="muted small">⇄ 統合</span>}
+          {s.commit.branchId !== bid && p.branches[s.commit.branchId] && <span className="muted small">⑂ {p.branches[s.commit.branchId].name}</span>}
+        </div>
         {withBody && s.commit.body.trim() && <Markdown text={s.commit.body} />}
         {withForks && s.forks.map((f) => (
           <div key={f.branch.id} className="ofork" style={{ '--bc': colors.get(f.branch.id) } as React.CSSProperties}>
@@ -146,6 +169,10 @@ export function Outline({ project: p, onSelect }: { project: Project; onSelect: 
         <span className="spacer" />
         <button className="btn" onClick={copy}>{copied ? 'コピーしました' : 'Markdown をコピー'}</button>
         <button className="btn" onClick={download}>.md で保存</button>
+        <button className="btn" onClick={downloadBib} disabled={refCommits.length === 0}
+          title={refCommits.length ? `この筋の文献 ${refCommits.length} 件を BibTeX で保存` : '文献情報を入れた記録がありません'}>
+          参考文献 .bib{refCommits.length ? `（${refCommits.length}）` : ''}
+        </button>
       </div>
       <p className="hint">
         選んだブランチの先端から最初の記録まで辿った一本の筋です。上から順に読むと論文の構成になります。

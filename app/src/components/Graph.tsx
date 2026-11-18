@@ -26,6 +26,13 @@ export function Graph({ project: p, selectedId, onSelect, onCheckout, tagFilter,
     [p, hideAbandoned],
   );
   const filtering = tagFilter.length > 0 || query.trim() !== '';
+  const openTasksFrom = useMemo(() => {
+    const m = new Map<ID, number>();
+    for (const t of Object.values(p.tasks)) {
+      if (t.sourceCommitId && (t.status === 'todo' || t.status === 'doing')) m.set(t.sourceCommitId, (m.get(t.sourceCommitId) ?? 0) + 1);
+    }
+    return m;
+  }, [p.tasks]);
   const x = (col: number) => PAD + col * COL_W;
   const y = (row: number) => row * ROW_H + ROW_H / 2;
   const gw = PAD * 2 + (layout.cols - 1) * COL_W;
@@ -48,10 +55,13 @@ export function Graph({ project: p, selectedId, onSelect, onCheckout, tagFilter,
           const x1 = x(e.from.col), y1 = y(e.from.row), x2 = x(e.to.col), y2 = y(e.to.row);
           const d = x1 === x2
             ? `M${x1} ${y1} L${x2} ${y2}`
-            : `M${x1} ${y1} C${x1} ${y1 + ROW_H * 0.6} ${x2} ${y1 + ROW_H * 0.4} ${x2} ${y1 + ROW_H} L${x2} ${y2}`;
+            : e.merge
+              // 統合: 統合元のレーンを下りてから、統合先へ合流する
+              ? `M${x1} ${y1} L${x1} ${y2 - ROW_H} C${x1} ${y2 - ROW_H * 0.4} ${x2} ${y2 - ROW_H * 0.6} ${x2} ${y2}`
+              : `M${x1} ${y1} C${x1} ${y1 + ROW_H * 0.6} ${x2} ${y1 + ROW_H * 0.4} ${x2} ${y1 + ROW_H} L${x2} ${y2}`;
           return (
             <path
-              key={e.to.commit.id}
+              key={e.to.commit.id + (e.merge ? '-m' : '')}
               d={d}
               fill="none"
               stroke={e.color}
@@ -107,6 +117,10 @@ export function Graph({ project: p, selectedId, onSelect, onCheckout, tagFilter,
                   {b.name}
                 </button>
               ))}
+              {c.mergeParentId && <span className="att" title="ブランチを統合した記録">⇄ 統合</span>}
+              {openTasksFrom.get(c.id) && (
+                <span className="task-mark" title="この記録から作った未完了のタスク">☐ {openTasksFrom.get(c.id)}</span>
+              )}
               {countAttachments(c.body) > 0 && (
                 <span className="att" title="画像・ファイルの添付あり">📎{countAttachments(c.body)}</span>
               )}

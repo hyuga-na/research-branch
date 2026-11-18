@@ -1,6 +1,6 @@
 import { marked } from 'marked';
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import type { BranchStatus, ID, Tag } from '../types';
+import type { BranchStatus, ID, Tag, TaskStatus } from '../types';
 import { isImagePath, isVideoPath, mapOutsideCode, WIKI_RE } from '../wiki';
 
 const escapeHtml = (s: string) =>
@@ -85,10 +85,32 @@ export const STATUS_LABEL: Record<BranchStatus, string> = {
   active: '進行中',
   adopted: '採用',
   abandoned: '棄却',
+  merged: '統合済み',
 };
 
 export function StatusBadge({ status }: { status: BranchStatus }) {
   return <span className={`status status-${status}`}>{STATUS_LABEL[status]}</span>;
+}
+
+export const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
+  todo: '未着手',
+  doing: '進行中',
+  done: '完了',
+  dropped: '見送り',
+};
+
+export function TaskStatusBadge({ status }: { status: TaskStatus }) {
+  return <span className={`tstatus tstatus-${status}`}>{TASK_STATUS_LABEL[status]}</span>;
+}
+
+/** 「あと 12 日」「今日」「3 日超過」 */
+export function DueLabel({ date, done }: { date: string; done?: boolean }) {
+  const [y, m, d] = date.split('-').map(Number);
+  const now = new Date();
+  const diff = Math.round((new Date(y, m - 1, d).getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86400000);
+  const text = diff === 0 ? '今日' : diff > 0 ? `あと ${diff} 日` : `${-diff} 日超過`;
+  const cls = done ? 'due' : diff < 0 ? 'due due-over' : diff <= 3 ? 'due due-soon' : 'due';
+  return <span className={cls} title={date}>📅 {m}/{d}（{text}）</span>;
 }
 
 export function Modal({ title, children, onClose, wide }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {

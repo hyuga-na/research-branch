@@ -1,27 +1,50 @@
-import { useRef, useState } from 'react';
-import type { Commit, ID, Project } from '../types';
-import { childrenMap, lineage, type CommitInput } from '../store';
+import { useMemo, useRef, useState } from 'react';
+import type { Commit, ID, Project, Reference, ResultItem } from '../types';
+import { childrenMap, isOpenTask, lineage, type CommitInput } from '../store';
 import { attachmentMarkdown, backlinks, uploadAttachment } from '../wiki';
+import { emptyRef, fullCite, makeKey, parseBibtex, toBibtex } from '../bib';
 import { branchColorMap } from '../graph';
-import { fmtDate, Markdown, StatusBadge, TagChip } from './ui';
+import { fmtDate, Markdown, StatusBadge, TagChip, TaskStatusBadge } from './ui';
 
 // ---------- 記録エディタ ----------
 
 export function CommitEditor({
-  project: p, initial, heading, sub, submitLabel, onSubmit, onCancel,
+  project: p, initial, heading, sub, submitLabel, defaultTaskIds, onSubmit, onCancel,
 }: {
   project: Project;
   initial?: Commit;
   heading: string;
   sub?: React.ReactNode;
   submitLabel: string;
-  onSubmit: (input: CommitInput) => void;
+  /** タスクから記録を始めたときに最初から紐づけるタスク */
+  defaultTaskIds?: ID[];
+  onSubmit: (input: CommitInput, closeTasks: boolean) => void;
   onCancel: () => void;
 }) {
   const [title, setTitle] = useState(initial?.title ?? '');
   const [body, setBody] = useState(initial?.body ?? '');
   const [tagIds, setTagIds] = useState<ID[]>(initial?.tagIds ?? []);
   const [links, setLinks] = useState((initial?.links ?? []).join('\n'));
+  const [taskIds, setTaskIds] = useState<ID[]>(initial?.taskIds ?? defaultTaskIds ?? []);
+  const [closeTasks, setCloseTasks] = useState(false);
+  const [ref, setRef] = useState<Reference>(initial?.ref ?? emptyRef());
+  const [bibText, setBibText] = useState('');
+  const [bibErr, setBibErr] = useState('');
+  const [results, setResults] = useState<ResultItem[]>(initial?.results?.length ? initial.results : []);
+  const priorTag = p.tagOrder.find((t) => p.tags[t]?.name === '先行研究');
+  const resultTag = p.tagOrder.find((t) => p.tags[t]?.name === '実験結果');
+  const [refOpen, setRefOpen] = useState(!!initial?.ref);
+  const [resOpen, setResOpen] = useState(!!initial?.results?.length);
+  // 他の記録で使われている項目名（入力候補）
+  const resultKeys = useMemo(() => {
+    const count = new Map<string, number>();
+    for (const c of Object.values(p.commits)) for (const r of c.results) if (r.key) count.set(r.key, (count.get(r.key) ?? 0) + 1);
+    return [...count.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  }, [p.commits]);
+  const taskChoices = Object.values(p.tasks)
+    .filter((t) => isOpenTask(t) || taskIds.includes(t.id))
+    .sort((a, b) => a.number - b.number);
+  const setRefField = (k: keyof Reference, v: string) => setRef((r) => ({ ...r, [k]: v }));
   const [preview, setPreview] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [uploadErr, setUploadErr] = useState('');
@@ -77,12 +100,27 @@ export function CommitEditor({
 
   const submit = () => {
     if (!title.trim()) return;
+    const hasRefData = !!(ref.title.trim() || ref.authors.trim());
     onSubmit({
       title: title.trim(),
       body,
       tagIds,
       links: links.split('\n').map((s) => s.trim()).filter(Boolean),
-    });
+      taskIds,
+      ref: hasRefData ? { ...ref, key: ref.key.trim() || makeKey(ref) } : null,
+      results: results.map((r) => ({ key: r.key.trim(), value: r.value.trim() })).filter((r) => r.key && r.value),
+    }, closeTasks);
+  };
+
+  const importBib = () => {
+    const r = parseBibtex(bibText);
+    if (!r) { setBibErr('BibTeX を読み取れませんでした（@article{key, ... } の形で貼り付けてください）'); return; }
+    setBibErr('');
+    setRef(r);
+    setBibText('');
+    if (!title.trim() && r.title) setTitle(`サーベイ: ${r.title}`);
+    if (r.doi && !links.includes(r.doi)) setLinks((l) => (l ? l + '\n' : '') + `https://doi.org/${r.doi}`);
+    if (priorTag && !tagIds.includes(priorTag)) setTagIds((t) => [...t, priorTag]);
   };
 
   return (
@@ -105,11 +143,41 @@ export function CommitEditor({
               key={id}
               tag={p.tags[id]}
               active={tagIds.includes(id)}
-              onClick={() => setTagIds(tagIds.includes(id) ? tagIds.filter((t) => t !== id) : [...tagIds, id])}
+              onClick={() => {
+                const on = !tagIds.includes(id);
+                setTagIds(on ? [...tagIds, id] : tagIds.filter((t) => t !== id));
+                // タグに合わせて関連する入力欄を開く
+                if (on && id === priorTag) setRefOpen(true);
+                if (on && id === resultTag) setResOpen(true);
+              }}
             />
           ))}
         </div>
       </div>
+      {taskChoices.length > 0 && (
+        <div className="field">
+          <span>取り組んだタスク</span>
+          <div className="tag-pick">
+            {taskChoices.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={`task-chip${taskIds.includes(t.id) ? ' on' : ''}`}
+                onClick={() => setTaskIds(taskIds.includes(t.id) ? taskIds.filter((x) => x !== t.id) : [...taskIds, t.id])}
+                title={t.title}
+              >
+                #{t.number} {t.title.length > 22 ? t.title.slice(0, 22) + '…' : t.title}
+              </button>
+            ))}
+          </div>
+          {taskIds.some((id) => p.tasks[id] && isOpenTask(p.tasks[id])) && (
+            <label className="check">
+              <input type="checkbox" checked={closeTasks} onChange={(e) => setCloseTasks(e.target.checked)} />
+              保存したら、選んだタスクを「完了」にする
+            </label>
+          )}
+        </div>
+      )}
       <div className="field">
         <span className="field-row">
           本文（Markdown）
@@ -177,6 +245,62 @@ export function CommitEditor({
         <span>リンク（論文URL・DOI・コードのパス・データの場所など、1行に1つ）</span>
         <textarea value={links} onChange={(e) => setLinks(e.target.value)} rows={3} placeholder="https://doi.org/...&#10;experiments/exp01/train.py" />
       </label>
+
+      <details className="fold" open={refOpen} onToggle={(e) => setRefOpen((e.target as HTMLDetailsElement).open)}>
+        <summary>📚 文献情報（先行研究の記録に付けると BibTeX を書き出せます）</summary>
+        <div className="fold-body">
+          <div className="field">
+            <span>BibTeX を貼り付けて読み込む（Google Scholar などからコピー）</span>
+            <textarea value={bibText} onChange={(e) => setBibText(e.target.value)} rows={3} placeholder={'@inproceedings{perez2018film,\n  title={FiLM: ...}, author={Perez, Ethan and ...}, year={2018}\n}'} />
+            <div className="row-gap">
+              <button type="button" className="btn sm" onClick={importBib} disabled={!bibText.trim()}>読み込む</button>
+              {bibErr && <span className="error small">{bibErr}</span>}
+            </div>
+          </div>
+          <div className="grid2">
+            <label className="field span2"><span>著者（「A and B and C」の形）</span><input value={ref.authors} onChange={(e) => setRefField('authors', e.target.value)} placeholder="Perez, Ethan and Strub, Florian" /></label>
+            <label className="field span2"><span>タイトル</span><input value={ref.title} onChange={(e) => setRefField('title', e.target.value)} /></label>
+            <label className="field"><span>年</span><input value={ref.year} onChange={(e) => setRefField('year', e.target.value)} placeholder="2018" /></label>
+            <label className="field"><span>種類</span>
+              <select value={ref.type} onChange={(e) => setRefField('type', e.target.value)}>
+                <option value="inproceedings">会議論文</option>
+                <option value="article">論文誌</option>
+                <option value="misc">プレプリント・その他</option>
+                <option value="book">書籍</option>
+              </select>
+            </label>
+            <label className="field span2"><span>会議名・論文誌名</span><input value={ref.venue} onChange={(e) => setRefField('venue', e.target.value)} placeholder="Proceedings of AAAI" /></label>
+            <label className="field"><span>DOI</span><input value={ref.doi} onChange={(e) => setRefField('doi', e.target.value)} /></label>
+            <label className="field"><span>BibTeX キー</span><input value={ref.key} onChange={(e) => setRefField('key', e.target.value)} placeholder={makeKey(ref) || '自動で作成'} /></label>
+            <label className="field span2"><span>URL</span><input value={ref.url} onChange={(e) => setRefField('url', e.target.value)} /></label>
+          </div>
+        </div>
+      </details>
+
+      <details className="fold" open={resOpen} onToggle={(e) => setResOpen((e.target as HTMLDetailsElement).open)}>
+        <summary>📊 条件・結果の値（一覧の「比較表」で並べて比べられます）</summary>
+        <div className="fold-body">
+          <datalist id="result-keys">{resultKeys.map((k) => <option key={k} value={k} />)}</datalist>
+          {results.map((r, i) => (
+            <div key={i} className="kv-row">
+              <input list="result-keys" value={r.key} placeholder="項目（例: 手法, seed, accuracy）" aria-label="項目名"
+                onChange={(e) => setResults(results.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))} />
+              <input value={r.value} placeholder="値" aria-label="値"
+                onChange={(e) => setResults(results.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))} />
+              <button type="button" className="icon-btn sm" aria-label="この行を削除" onClick={() => setResults(results.filter((_, j) => j !== i))}>×</button>
+            </div>
+          ))}
+          <div className="row-gap">
+            <button type="button" className="btn sm" onClick={() => setResults([...results, { key: '', value: '' }])}>＋ 行を追加</button>
+            {results.length === 0 && resultKeys.length > 0 && (
+              <button type="button" className="btn sm ghost" onClick={() => setResults(resultKeys.slice(0, 6).map((k) => ({ key: k, value: '' })))}>
+                よく使う項目で始める
+              </button>
+            )}
+          </div>
+        </div>
+      </details>
+
       <div className="editor-actions">
         <button type="button" className="btn ghost" onClick={onCancel}>キャンセル</button>
         <button type="submit" className="btn primary" disabled={!title.trim()}>{submitLabel}</button>
@@ -189,7 +313,7 @@ export function CommitEditor({
 // ---------- コミット詳細 ----------
 
 export function CommitDetail({
-  project: p, commit: c, onEdit, onBranch, onDelete, onSelect, onCheckout,
+  project: p, commit: c, onEdit, onBranch, onDelete, onSelect, onCheckout, onNewTask, onOpenTask, onUnmerge,
 }: {
   project: Project;
   commit: Commit;
@@ -198,7 +322,21 @@ export function CommitDetail({
   onDelete: () => void;
   onSelect: (id: ID) => void;
   onCheckout: (id: ID) => void;
+  onNewTask: () => void;
+  onOpenTask: (id: ID) => void;
+  onUnmerge: () => void;
 }) {
+  const [bibCopied, setBibCopied] = useState(false);
+  const mergeFrom = c.mergeParentId ? p.commits[c.mergeParentId] : null;
+  const linkedTasks = c.taskIds.map((id) => p.tasks[id]).filter(Boolean);
+  const spawnedTasks = Object.values(p.tasks).filter((t) => t.sourceCommitId === c.id && !c.taskIds.includes(t.id));
+  const taskRow = (t: (typeof linkedTasks)[number], note?: string) => (
+    <li key={t.id}>
+      <TaskStatusBadge status={t.status} />{' '}
+      <button className="link-btn" onClick={() => onOpenTask(t.id)}>#{t.number} {t.title}</button>
+      {note && <span className="muted small"> {note}</span>}
+    </li>
+  );
   const colors = branchColorMap(p);
   const branch = p.branches[c.branchId];
   const kids = childrenMap(p).get(c.id) ?? [];
@@ -232,7 +370,49 @@ export function CommitDetail({
           ここから別の方向へ進めたい場合は「ここから分岐」を使います。
         </p>
       )}
-      {c.body.trim() ? <Markdown text={c.body} /> : <p className="muted">本文なし</p>}
+      {mergeFrom && (
+        <p className="merge-note">
+          ⇄ ブランチ「{p.branches[mergeFrom.branchId]?.name ?? '?'}」の成果を統合した記録です（統合元の先端:{' '}
+          <button className="link-btn" onClick={() => onSelect(mergeFrom.id)}>{mergeFrom.title}</button>）
+          <br />
+          <button className="btn sm unmerge-btn" onClick={onUnmerge}>↩ この統合を取り消す</button>
+        </p>
+      )}
+      {c.body.trim() ? <Markdown text={c.body} /> : !mergeFrom && <p className="muted">本文なし</p>}
+      {c.ref && (c.ref.title || c.ref.authors) && (
+        <div className="detail-section">
+          <h4>📚 文献情報</h4>
+          <p className="cite"><Markdown text={fullCite(c.ref)} /></p>
+          <div className="row-gap">
+            <button className="btn sm" onClick={() => navigator.clipboard.writeText(toBibtex(c.ref!)).then(() => { setBibCopied(true); setTimeout(() => setBibCopied(false), 1500); }).catch(() => {})}>
+              {bibCopied ? 'コピーしました' : 'BibTeX をコピー'}
+            </button>
+            <code className="small">{c.ref.key}</code>
+          </div>
+        </div>
+      )}
+      {c.results.length > 0 && (
+        <div className="detail-section">
+          <h4>📊 条件・結果の値</h4>
+          <table className="kv-table"><tbody>
+            {c.results.map((r, i) => <tr key={i}><th>{r.key}</th><td>{r.value}</td></tr>)}
+          </tbody></table>
+        </div>
+      )}
+      <div className="detail-section">
+        <div className="section-head">
+          <h4>タスク</h4>
+          <button className="btn sm" onClick={onNewTask}>＋ この記録からタスクを作る</button>
+        </div>
+        {linkedTasks.length === 0 && spawnedTasks.length === 0 ? (
+          <p className="muted small">「次にやること」が出てきたら、ここからタスクにしておくと忘れません。</p>
+        ) : (
+          <ul className="rel plain">
+            {linkedTasks.map((t) => taskRow(t, '（この記録で取り組んだ）'))}
+            {spawnedTasks.map((t) => taskRow(t, '（この記録から作成）'))}
+          </ul>
+        )}
+      </div>
       {c.links.length > 0 && (
         <div className="detail-section">
           <h4>リンク</h4>

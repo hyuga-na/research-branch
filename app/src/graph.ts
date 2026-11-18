@@ -1,5 +1,5 @@
 import type { Branch, Commit, ID, Project } from './types';
-import { lineage, sortedBranches } from './store';
+import { fullLineage, sortedBranches } from './store';
 
 export const BRANCH_COLORS = [
   '#4f7cff', '#e8833a', '#2fa36b', '#c94f7c', '#8a63d2', '#2a9bb5', '#c9a227', '#d0573f', '#5b9e3a', '#9a5bb5',
@@ -18,6 +18,8 @@ export interface GraphEdge {
   color: string;
   dashed: boolean;
   onPath: boolean;
+  /** ブランチの統合（merge）を表す線 */
+  merge?: boolean;
 }
 
 export interface GraphLayout {
@@ -64,6 +66,12 @@ export function layoutGraph(p: Project, opts: { hideAbandoned: boolean; focusBra
       spans.set(c.branchId, [start, r]);
     } else s[1] = r;
   }
+  // 統合されたブランチのレーンは、統合する行まで使用中にする
+  for (const c of visible) {
+    if (!c.mergeParentId || !rowOf.has(c.mergeParentId)) continue;
+    const s = spans.get(p.commits[c.mergeParentId].branchId);
+    if (s) s[1] = Math.max(s[1], rowOf.get(c.id)!);
+  }
   const lanes: [number, number][][] = [];
   const colOf = new Map<ID, number>();
   for (const b of sortedBranches(p)) {
@@ -85,7 +93,7 @@ export function layoutGraph(p: Project, opts: { hideAbandoned: boolean; focusBra
     color: branchColor.get(c.branchId) ?? BRANCH_COLORS[0],
   }));
   const byId = new Map(rows.map((r) => [r.commit.id, r]));
-  const focusPath = new Set(lineage(p, p.branches[opts.focusBranchId]?.headId ?? null).map((c) => c.id));
+  const focusPath = new Set(fullLineage(p, p.branches[opts.focusBranchId]?.headId ?? null).map((c) => c.id));
 
   const edges: GraphEdge[] = [];
   for (const r of rows) {
@@ -98,6 +106,17 @@ export function layoutGraph(p: Project, opts: { hideAbandoned: boolean; focusBra
       dashed: p.branches[r.commit.branchId]?.status === 'abandoned',
       onPath: focusPath.has(r.commit.id),
     });
+    const mp = r.commit.mergeParentId ? byId.get(r.commit.mergeParentId) : undefined;
+    if (mp) {
+      edges.push({
+        from: mp,
+        to: r,
+        color: mp.color,
+        dashed: false,
+        onPath: focusPath.has(r.commit.id),
+        merge: true,
+      });
+    }
   }
   return { rows, edges, cols: Math.max(1, lanes.length), branchColor };
 }

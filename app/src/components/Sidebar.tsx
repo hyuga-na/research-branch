@@ -16,6 +16,7 @@ interface Props {
   setHideAbandoned: (v: boolean) => void;
   onAddTag: (name: string, color: string) => void;
   onEditTags: () => void;
+  onMerge: () => void;
 }
 
 export function Sidebar(props: Props) {
@@ -55,7 +56,12 @@ export function Sidebar(props: Props) {
             );
           })}
         </ul>
-        <p className="hint">コミットを選んで「ここから分岐」で新しい筋を作れます。</p>
+        {Object.keys(p.branches).length > 1 && (
+          <button className="btn sm merge-side-btn" onClick={props.onMerge} title="別のブランチの成果を、現在のブランチ（HEAD）に取り込む">
+            ⇄ 現在のブランチに統合…
+          </button>
+        )}
+        <p className="hint">記録を選んで「ここから分岐」で新しい筋を作れます。寄り道した筋の成果は「統合」で本線に取り込めます。</p>
       </section>
 
       <section>
