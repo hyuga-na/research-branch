@@ -406,3 +406,24 @@ textarea.drag-over { outline: 2px dashed var(--accent); background: var(--bg-sel
 .undo-group .icon-btn { font-size: 18px; padding: 2px 8px; }
 .icon-btn:disabled { opacity: .35; cursor: default; background: transparent; }
 .unmerge-btn { margin-top: 6px; }
+
+/* ---------- 並べ替え（ドラッグ） ---------- */
+.grow { position: relative; }
+.drag-handle { position: absolute; left: 2px; top: 50%; transform: translateY(-50%); color: var(--muted); opacity: 0; font-size: 11px; letter-spacing: -2px; cursor: grab; user-select: none; }
+.grow:hover .drag-handle { opacity: .7; }
+.grow[draggable="true"] { cursor: grab; }
+.graph.dragging .grow { cursor: grabbing; }
+.grow-dragging { opacity: .4; }
+.grow-drop { box-shadow: inset 0 -3px 0 var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.drop-label {
+  position: absolute; right: 12px; bottom: -10px; z-index: 4; pointer-events: none;
+  background: var(--accent); color: #fff; font-size: 11px; padding: 1px 8px; border-radius: 9px; white-space: nowrap;
+}
+.drop-top {
+  position: absolute; left: 0; right: 0; top: 0; height: 18px; z-index: 5;
+  border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  color: var(--accent); font-size: 11px; display: flex; align-items: center; justify-content: center;
+}
+.drop-top.over { background: var(--accent); color: #fff; }
+.move-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: -4px 0 12px; }
+.btn:disabled { opacity: .45; cursor: default; }

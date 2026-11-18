@@ -313,7 +313,7 @@ export function CommitEditor({
 // ---------- コミット詳細 ----------
 
 export function CommitDetail({
-  project: p, commit: c, onEdit, onBranch, onDelete, onSelect, onCheckout, onNewTask, onOpenTask, onUnmerge,
+  project: p, commit: c, onEdit, onBranch, onDelete, onSelect, onCheckout, onNewTask, onOpenTask, onUnmerge, onMoveUp, onMoveDown,
 }: {
   project: Project;
   commit: Commit;
@@ -325,6 +325,8 @@ export function CommitDetail({
   onNewTask: () => void;
   onOpenTask: (id: ID) => void;
   onUnmerge: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
 }) {
   const [bibCopied, setBibCopied] = useState(false);
   const mergeFrom = c.mergeParentId ? p.commits[c.mergeParentId] : null;
@@ -363,6 +365,12 @@ export function CommitDetail({
         <button className="btn" onClick={onEdit}>編集</button>
         <button className="btn accent" onClick={onBranch} title="このコミットまで戻り、新しい筋（ブランチ）を始める">⑂ ここから分岐</button>
         {isLeaf && <button className="btn danger-ghost" onClick={onDelete}>削除</button>}
+      </div>
+      <div className="move-row">
+        <span className="muted small">順番:</span>
+        <button className="btn sm" onClick={onMoveUp} disabled={!onMoveUp} title="同じブランチ内で、ひとつ前の記録と入れ替える">↑ 前へ</button>
+        <button className="btn sm" onClick={onMoveDown} disabled={!onMoveDown} title="同じブランチ内で、ひとつ後の記録と入れ替える">↓ 後ろへ</button>
+        <span className="muted small">グラフ上でドラッグしても移動できます</span>
       </div>
       {!isCurrentHead && (
         <p className="hint">

@@ -100,7 +100,61 @@ export function fullLineage(p: Project, commitId: ID | null): Commit[] {
     if (c.parentId) stack.push(c.parentId);
     if (c.mergeParentId) stack.push(c.mergeParentId);
   }
-  return [...seen.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return topoOrder(p, new Set(seen.keys()));
+}
+
+/**
+ * 記録を「ロジックの順番」に並べる（前の記録 → 後の記録の順を必ず守る）。
+ * 並べ替えで後から差し込んだ記録は作成日時が新しくても、つながり上の位置に表示される。
+ * 並べ替えをしていなければ作成順と同じになる。subset を渡すとその記録だけを並べる。
+ */
+export function topoOrder(p: Project, subset?: Set<ID>): Commit[] {
+  const list = Object.values(p.commits).filter((c) => !subset || subset.has(c.id));
+  const ids = new Set(list.map((c) => c.id));
+  // 子（前の記録 = parentId でつながるもの）
+  const kids = new Map<ID, Commit[]>();
+  for (const c of list) {
+    if (c.parentId && ids.has(c.parentId)) kids.set(c.parentId, [...(kids.get(c.parentId) ?? []), c]);
+  }
+  // 並び順の基準: 自分と後に続く記録のうち、いちばん早い作成日時
+  const key = new Map<ID, string>();
+  const keyOf = (c: Commit, guard = new Set<ID>()): string => {
+    const k = key.get(c.id);
+    if (k) return k;
+    if (guard.has(c.id)) return c.createdAt; // 循環の保険
+    guard.add(c.id);
+    let m = c.createdAt;
+    for (const ch of kids.get(c.id) ?? []) { const ck = keyOf(ch, guard); if (ck < m) m = ck; }
+    key.set(c.id, m);
+    return m;
+  };
+  for (const c of list) keyOf(c);
+  // Kahn 法: 前の記録がすべて出たものの中から、基準が早い順に出す
+  const indeg = new Map<ID, number>(list.map((c) => [c.id, 0]));
+  const next = new Map<ID, ID[]>();
+  for (const c of list) {
+    for (const par of [c.parentId, c.mergeParentId]) {
+      if (par && ids.has(par)) {
+        indeg.set(c.id, indeg.get(c.id)! + 1);
+        next.set(par, [...(next.get(par) ?? []), c.id]);
+      }
+    }
+  }
+  const cmp = (a: Commit, b: Commit) =>
+    key.get(a.id)!.localeCompare(key.get(b.id)!) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+  const ready = list.filter((c) => indeg.get(c.id) === 0);
+  const out: Commit[] = [];
+  while (ready.length) {
+    ready.sort(cmp);
+    const c = ready.shift()!;
+    out.push(c);
+    for (const nid of next.get(c.id) ?? []) {
+      const d = indeg.get(nid)! - 1;
+      indeg.set(nid, d);
+      if (d === 0) ready.push(p.commits[nid]);
+    }
+  }
+  return out; // 循環があると list より短くなる
 }
 
 export function childrenMap(p: Project): Map<ID, Commit[]> {
@@ -420,6 +474,60 @@ const rawOps = {
   },
 
   /**
+   * 記録 id を、記録 afterId の直後へ移動する（afterId が null なら main の先頭へ）。
+   * 元の位置では、前後の記録をつなぎ直す。移動した記録は移動先のブランチに属する。
+   */
+  moveCommit(id: ID, afterId: ID | null): Mut {
+    return (p) => {
+      const x = p.commits[id];
+      if (!x) throw new Error('記録が見つかりません');
+      if (afterId === id) return;
+      if (afterId && !p.commits[afterId]) throw new Error('移動先の記録が見つかりません');
+      const P = x.parentId;
+      // 分岐の起点になっている最初の記録は、つなぎ先がなくなるので動かせない
+      if (!P && Object.values(p.branches).some((b) => b.baseId === id))
+        throw new Error('ブランチの分岐元になっている最初の記録は移動できません');
+
+      // 1) 元の位置から外す（後ろの記録・分岐・ブランチの先端を、ひとつ前の記録へつなぎ直す）
+      for (const c of Object.values(p.commits)) {
+        if (c.parentId === id) c.parentId = P;
+        if (c.mergeParentId === id) c.mergeParentId = P;
+      }
+      for (const b of Object.values(p.branches)) {
+        if (b.headId === id) b.headId = P;
+        if (b.baseId === id) b.baseId = P;
+      }
+
+      // 2) 移動先に差し込む
+      if (afterId) {
+        const y = p.commits[afterId];
+        // 移動先のブランチで、y の次に続いていた記録
+        const cont = Object.values(p.commits)
+          .filter((c) => c.parentId === y.id && c.branchId === y.branchId && c.id !== id)
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+        x.parentId = y.id;
+        x.branchId = y.branchId;
+        if (cont) cont.parentId = id;
+        const yb = p.branches[y.branchId];
+        if (yb && yb.headId === y.id) yb.headId = id;
+      } else {
+        const main = Object.values(p.branches).find((b) => b.baseId === null);
+        if (!main) throw new Error('main ブランチが見つかりません');
+        const root = topoOrder(p).find((c) => c.branchId === main.id && !c.parentId && c.id !== id);
+        x.parentId = null;
+        x.branchId = main.id;
+        if (root) root.parentId = id;
+        if (!main.headId) main.headId = id;
+      }
+      x.updatedAt = now();
+
+      // 3) つながりが循環していないか確認（循環するならこの操作は取りやめ）
+      if (topoOrder(p).length !== Object.keys(p.commits).length)
+        throw new Error('その位置には移動できません（前後関係が循環してしまいます）');
+    };
+  },
+
+  /**
    * 統合（merge）を取り消す。
    * 統合の記録が末端なら記録ごと削除し、後に記録が続いていれば統合のつながりだけ外して普通の記録に戻す。
    * 取り込んだ側のブランチが「統合済み」なら「進行中」に戻す。
@@ -450,7 +558,7 @@ const rawOps = {
 };
 
 const OP_LABELS: Record<string, string> = {
-  commit: '記録の追加', editCommit: '記録の編集', deleteCommit: '記録の削除', merge: 'ブランチの統合', unmerge: '統合の取り消し',
+  commit: '記録の追加', editCommit: '記録の編集', deleteCommit: '記録の削除', moveCommit: '記録の移動', merge: 'ブランチの統合', unmerge: '統合の取り消し',
   branchFrom: 'ブランチの作成', checkout: 'ブランチの切り替え', editBranch: 'ブランチの編集', setBranchStatus: 'ブランチの状態変更',
   deleteBranch: 'ブランチの削除', addTag: 'タグの追加', editTag: 'タグの編集', deleteTag: 'タグの削除', editProject: 'プロジェクトの編集',
   addTask: 'タスクの追加', editTask: 'タスクの編集', setTaskStatus: 'タスクの状態変更', dropBranchTasks: 'タスクの見送り',

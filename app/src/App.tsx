@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { findByTitle } from './wiki';
-import type { Branch, BranchStatus, DB, ID, Milestone, Project } from './types';
+import type { Branch, BranchStatus, Commit, DB, ID, Milestone, Project } from './types';
 import { daysUntil, fullLineage, isOpenTask, newProject, normalizeDB, ops, ownCommits, sortedBranches, TAG_COLORS, useDB } from './store';
 import { MilestoneDialog, nextMilestone, TaskDetail, TaskEditor, TasksView } from './components/Tasks';
 import { ReportView } from './components/Report';
@@ -131,6 +131,26 @@ export default function App() {
   };
   const headCommit = current.headId ? project.commits[current.headId] : null;
   const openTask = (id: ID) => setPanel({ kind: 'task', id });
+  /** 記録の並べ替え（ドラッグ & ドロップ / ↑↓ ボタン） */
+  const moveCommit = (id: ID, afterId: ID | null) => {
+    const c = project.commits[id];
+    const target = afterId ? project.commits[afterId] : null;
+    if (!c || (afterId && !target)) return;
+    if (run(ops.moveCommit(id, afterId))) {
+      setPanel({ kind: 'detail', id });
+      flash(target ? `「${c.title.slice(0, 20)}」を「${target.title.slice(0, 20)}」の後ろに移動しました（Ctrl+Z で元に戻せます）` : `「${c.title.slice(0, 20)}」を最初の記録にしました（Ctrl+Z で元に戻せます）`);
+    }
+  };
+  /** ↑ 前へ: 同じブランチ内で、ひとつ前の記録と入れ替える（移動先 = 2つ前。最初なら null） */
+  const upTarget = (c: Commit): ID | null | undefined => {
+    const prev = c.parentId ? project.commits[c.parentId] : null;
+    if (!prev || prev.branchId !== c.branchId) return undefined;
+    if (prev.parentId) return prev.parentId;
+    return project.branches[c.branchId]?.baseId === null ? null : undefined;
+  };
+  /** ↓ 後ろへ: 同じブランチ内で、ひとつ後の記録と入れ替える */
+  const downTarget = (c: Commit): ID | undefined =>
+    Object.values(project.commits).find((x) => x.parentId === c.id && x.branchId === c.branchId)?.id;
   /** 統合の取り消し（確認つき）。統合の記録が末端なら削除、後に続く記録があればつながりだけ外す */
   const unmerge = async (mergeCommitId: ID) => {
     const c = project.commits[mergeCommitId];
@@ -214,6 +234,8 @@ export default function App() {
         onNewTask={() => setPanel({ kind: 'newTask', sourceCommitId: c.id })}
         onOpenTask={openTask}
         onUnmerge={() => unmerge(c.id)}
+        onMoveUp={upTarget(c) !== undefined ? () => moveCommit(c.id, upTarget(c)!) : undefined}
+        onMoveDown={downTarget(c) ? () => moveCommit(c.id, downTarget(c)!) : undefined}
       />
     );
   } else if (panel.kind === 'task' && project.tasks[panel.id]) {
@@ -360,6 +382,7 @@ export default function App() {
               tagMode={tagMode}
               query={query}
               hideAbandoned={hideAbandoned}
+              onMove={moveCommit}
             />
           )}
           {view === 'list' && (

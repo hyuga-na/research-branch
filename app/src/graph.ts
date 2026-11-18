@@ -1,5 +1,5 @@
 import type { Branch, Commit, ID, Project } from './types';
-import { fullLineage, sortedBranches } from './store';
+import { fullLineage, sortedBranches, topoOrder } from './store';
 
 export const BRANCH_COLORS = [
   '#4f7cff', '#e8833a', '#2fa36b', '#c94f7c', '#8a63d2', '#2a9bb5', '#c9a227', '#d0573f', '#5b9e3a', '#9a5bb5',
@@ -43,7 +43,7 @@ export function layoutGraph(p: Project, opts: { hideAbandoned: boolean; focusBra
   const branchColor = branchColorMap(p);
   const hidden = (b: Branch | undefined) => !b || (opts.hideAbandoned && b.status === 'abandoned' && b.id !== opts.focusBranchId);
 
-  const sorted = Object.values(p.commits).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const sorted = topoOrder(p);
   const visible: Commit[] = [];
   const visibleIds = new Set<ID>();
   for (const c of sorted) {

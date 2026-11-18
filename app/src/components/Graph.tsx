@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { ID, Project } from '../types';
 import { branchesAtHead, matchesFilter } from '../store';
 import { layoutGraph } from '../graph';
@@ -18,9 +18,25 @@ interface Props {
   tagMode: 'any' | 'all';
   query: string;
   hideAbandoned: boolean;
+  /** 記録 id を afterId の直後へ移動（null なら先頭へ） */
+  onMove: (id: ID, afterId: ID | null) => void;
 }
 
-export function Graph({ project: p, selectedId, onSelect, onCheckout, tagFilter, tagMode, query, hideAbandoned }: Props) {
+const TOP = '__top';
+
+export function Graph({ project: p, selectedId, onSelect, onCheckout, tagFilter, tagMode, query, hideAbandoned, onMove }: Props) {
+  const [dragId, setDragIdState] = useState<ID | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  // 画面の更新を待たずに参照できるよう、ドラッグ中の記録は ref にも持つ
+  const dragRef = useRef<ID | null>(null);
+  const setDragId = (id: ID | null) => { dragRef.current = id; setDragIdState(id); };
+  const endDrag = () => { setDragId(null); setOverId(null); };
+  const drop = (target: string) => {
+    const id = dragRef.current;
+    endDrag();
+    if (!id || id === target) return;
+    onMove(id, target === TOP ? null : target);
+  };
   const layout = useMemo(
     () => layoutGraph(p, { hideAbandoned, focusBranchId: p.currentBranchId }),
     [p, hideAbandoned],
@@ -49,7 +65,17 @@ export function Graph({ project: p, selectedId, onSelect, onCheckout, tagFilter,
   }
 
   return (
-    <div className="graph" style={{ height }}>
+    <div className={`graph${dragId ? ' dragging' : ''}`} style={{ height }}>
+      {dragId && (
+        <div
+          className={`drop-top${overId === TOP ? ' over' : ''}`}
+          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setOverId(TOP); }}
+          onDragLeave={() => setOverId((o) => (o === TOP ? null : o))}
+          onDrop={(e) => { e.preventDefault(); drop(TOP); }}
+        >
+          ↑ ここに落とすと、いちばん最初の記録にします
+        </div>
+      )}
       <svg className="graph-svg" width={gw} height={height} aria-hidden>
         {layout.edges.map((e) => {
           const x1 = x(e.from.col), y1 = y(e.from.row), x2 = x(e.to.col), y2 = y(e.to.row);
@@ -96,13 +122,32 @@ export function Graph({ project: p, selectedId, onSelect, onCheckout, tagFilter,
         return (
           <div
             key={c.id}
-            className={`grow${selectedId === c.id ? ' grow-selected' : ''}${match ? '' : ' grow-dim'}`}
+            className={`grow${selectedId === c.id ? ' grow-selected' : ''}${match ? '' : ' grow-dim'}${dragId === c.id ? ' grow-dragging' : ''}${overId === c.id && dragId !== c.id ? ' grow-drop' : ''}`}
             style={{ height: ROW_H, paddingLeft: gw + 4 }}
             onClick={() => onSelect(c.id)}
             role="button"
             tabIndex={0}
             onKeyDown={(e) => { if (e.key === 'Enter') onSelect(c.id); }}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = 'move';
+              e.dataTransfer.setData('text/plain', c.title);
+              setDragId(c.id);
+            }}
+            onDragEnd={endDrag}
+            onDragOver={(e) => {
+              if (!dragRef.current || dragRef.current === c.id) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              if (overId !== c.id) setOverId(c.id);
+            }}
+            onDrop={(e) => { e.preventDefault(); drop(c.id); }}
+            title="ドラッグして別の記録の上に落とすと、その記録の直後に移動します"
           >
+            <span className="drag-handle" aria-hidden>⋮⋮</span>
+            {overId === c.id && dragId && dragId !== c.id && (
+              <span className="drop-label">↓ 「{p.commits[dragId]?.title.slice(0, 18)}」をこの記録の後ろへ</span>
+            )}
             <div className="grow-main">
               <span className="grow-title">{c.title || '(無題)'}</span>
               {heads.map((b) => (
