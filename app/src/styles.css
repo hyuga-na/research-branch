@@ -427,3 +427,5 @@ textarea.drag-over { outline: 2px dashed var(--accent); background: var(--bg-sel
 .drop-top.over { background: var(--accent); color: #fff; }
 .move-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: -4px 0 12px; }
 .btn:disabled { opacity: .45; cursor: default; }
+
+.confirm-detail { white-space: pre-line; line-height: 1.7; }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { findByTitle } from './wiki';
+import { backlinks, findByTitle } from './wiki';
 import type { Branch, BranchStatus, Commit, DB, ID, Milestone, Project } from './types';
 import { daysUntil, fullLineage, isOpenTask, newProject, normalizeDB, ops, ownCommits, sortedBranches, TAG_COLORS, useDB } from './store';
 import { MilestoneDialog, nextMilestone, TaskDetail, TaskEditor, TasksView } from './components/Tasks';
@@ -226,8 +226,22 @@ export default function App() {
         onEdit={() => setPanel({ kind: 'edit', id: c.id })}
         onBranch={() => setDialog({ kind: 'branch', from: c.id })}
         onDelete={async () => {
-          if (!(await askConfirm(`記録「${c.title}」を削除しますか？`, { detail: 'この操作は取り消せません。', okLabel: '削除', danger: true }))) return;
-          if (run(ops.deleteCommit(c.id))) setPanel({ kind: 'none' });
+          const next = Object.values(project.commits).filter((x) => x.parentId === c.id);
+          const prev = c.parentId ? project.commits[c.parentId] : null;
+          const forks = Object.values(project.branches).filter((b) => b.baseId === c.id);
+          const refs = backlinks(project, c).length;
+          const notes = [
+            next.length > 0 && (prev ? `後ろの記録 ${next.length} 件は「${prev.title.slice(0, 24)}」の後ろにつなぎ直します。` : `後ろの記録 ${next.length} 件が最初の記録になります。`),
+            forks.length > 0 && `ここから分岐していたブランチ ${forks.length} 本は、ひとつ前の記録からの分岐になります。`,
+            c.mergeParentId && '統合の記録なので、統合も取り消されます。',
+            refs > 0 && `${refs} 件の記録から [[リンク]] されています（リンクは切れます）。`,
+            '間違えたときは Ctrl+Z（↶）で元に戻せます。',
+          ].filter(Boolean).join('\n');
+          if (!(await askConfirm(`記録「${c.title}」を削除しますか？`, { detail: notes, okLabel: '削除', danger: true }))) return;
+          if (run(ops.deleteCommit(c.id))) {
+            setPanel({ kind: 'none' });
+            flash(`「${c.title.slice(0, 24)}」を削除しました（Ctrl+Z で元に戻せます）`);
+          }
         }}
         onSelect={select}
         onCheckout={checkout}

@@ -364,7 +364,7 @@ export function CommitDetail({
       <div className="detail-actions">
         <button className="btn" onClick={onEdit}>編集</button>
         <button className="btn accent" onClick={onBranch} title="このコミットまで戻り、新しい筋（ブランチ）を始める">⑂ ここから分岐</button>
-        {isLeaf && <button className="btn danger-ghost" onClick={onDelete}>削除</button>}
+        <button className="btn danger-ghost" onClick={onDelete} title={isLeaf ? "この記録を削除" : "この記録を削除し、前後の記録をつなぎ直す"}>削除</button>
       </div>
       <div className="move-row">
         <span className="muted small">順番:</span>

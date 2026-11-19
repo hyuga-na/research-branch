@@ -156,7 +156,7 @@ export function ConfirmDialog({ req, onDone }: { req: ConfirmRequest; onDone: ()
   return (
     <Modal title="確認" onClose={() => finish(false)}>
       <p className="confirm-msg">{req.message}</p>
-      {req.detail && <p className="muted small">{req.detail}</p>}
+      {req.detail && <p className="muted small confirm-detail">{req.detail}</p>}
       <div className="editor-actions">
         <button type="button" className="btn ghost" onClick={() => finish(false)}>キャンセル</button>
         <button

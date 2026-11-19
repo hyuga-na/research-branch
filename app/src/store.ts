@@ -316,20 +316,35 @@ const rawOps = {
       if (input.title !== undefined) renameWikiLinks(p, oldTitle, input.title);
     };
   },
-  /** 末端のコミットのみ削除可能 */
+  /**
+   * 記録を削除する。途中の記録でもよく、後ろの記録・分岐・ブランチの先端は、ひとつ前の記録へつなぎ直す。
+   * 統合の記録を消した場合、取り込んだ側のブランチは「進行中」に戻す。
+   */
   deleteCommit(id: ID): Mut {
     return (p) => {
       const c = p.commits[id];
       if (!c) return;
-      if (Object.values(p.commits).some((x) => x.parentId === id))
-        throw new Error('子コミットがあるため削除できません（末端のコミットのみ削除できます）');
-      if (Object.values(p.branches).some((b) => b.baseId === id && b.headId === id))
-        throw new Error('このコミットから分岐したブランチがあるため削除できません');
-      if (Object.values(p.commits).some((x) => x.mergeParentId === id))
-        throw new Error('この記録は別のブランチに統合されているため削除できません');
-      for (const b of Object.values(p.branches)) if (b.headId === id) b.headId = c.parentId;
+      const P = c.parentId;
+      // 最初の記録から別のブランチが分かれていると、つなぎ先がなくなる
+      if (!P && Object.values(p.branches).some((b) => b.baseId === id))
+        throw new Error('この記録から別のブランチが分岐しているため、最初の記録は削除できません（先に分岐したブランチを削除するか、記録を移動してください）');
+      const mergedFrom = c.mergeParentId ? p.commits[c.mergeParentId]?.branchId : null;
+      for (const x of Object.values(p.commits)) {
+        if (x.parentId === id) x.parentId = P;
+        if (x.mergeParentId === id) x.mergeParentId = P;
+      }
+      for (const b of Object.values(p.branches)) {
+        if (b.headId === id) b.headId = P;
+        if (b.baseId === id) b.baseId = P;
+      }
       for (const t of Object.values(p.tasks)) if (t.sourceCommitId === id) t.sourceCommitId = null;
       delete p.commits[id];
+      // 統合の記録だった場合: 取り込んだ側のブランチを戻す
+      const fb = mergedFrom ? p.branches[mergedFrom] : null;
+      if (fb && fb.status === 'merged') {
+        const own = new Set(ownCommits(p, fb).map((x) => x.id));
+        if (!Object.values(p.commits).some((x) => x.mergeParentId && own.has(x.mergeParentId))) fb.status = 'active';
+      }
     };
   },
   branchFrom(commitId: ID, name: string, note: string): Mut {
